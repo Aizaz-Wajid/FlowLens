@@ -100,7 +100,7 @@ def measure_flow(fp, lookups, capture_id, flow_id):
                 row["retx_count"] += 1
                 t0 = first_sent.get(rel)
                 if t0 is None:            # partial overlap: earliest earlier segment covering it
-                    t0 = min((t for s, t in first_sent.items() if s <= rel), default=p.t)
+                    t0 = min((t for s, t in first_sent.items() if s > rel), default=p.t)   # when the hole first appeared
                 gaps.append((t0, p.t))
             else:
                 first_sent.setdefault(rel, p.t)
@@ -115,7 +115,7 @@ def measure_flow(fp, lookups, capture_id, flow_id):
             row["ttfb_s"] = first_srv.t - req[-1].t
             row["server_wait_s"] = row["ttfb_s"] - row["rtt_s"]
         row["transfer_s"] = s_data[-1].t - first_srv.t
-        row["bytes"] = sum(p.plen for p in s_data) - _retx_bytes(s_data, s_isn)
+        row["bytes"] = _unique_bytes(s_data, s_isn)
 
     # ---- DNS lookup that led to this connection ----
     before = [l for l in lookups if l[2] <= syn.t and l[3]]
@@ -130,6 +130,24 @@ def measure_flow(fp, lookups, capture_id, flow_id):
     if s_data:
         row["total_s"] = s_data[-1].t - start
     return row
+
+
+def _unique_bytes(seg_list, isn):
+    """Payload bytes seen at least once, each byte counted once.
+    A byte that only arrived in a retransmission still counts (the original
+    was lost before the capture point, so the resend is the only copy)."""
+    ranges = sorted(((p.seq - isn) % M32, (p.seq - isn) % M32 + p.plen) for p in seg_list)
+    total, cur_s, cur_e = 0, None, None
+    for s, e in ranges:
+        if cur_e is None or s > cur_e:
+            if cur_e is not None:
+                total += cur_e - cur_s
+            cur_s, cur_e = s, e
+        else:
+            cur_e = max(cur_e, e)
+    if cur_e is not None:
+        total += cur_e - cur_s
+    return total
 
 
 def _retx_bytes(seg_list, isn):
