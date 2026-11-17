@@ -12,6 +12,7 @@ import sys
 
 from .measure import measure_pcap, COLUMNS
 from .baseline import b1_diagnose
+from .evaluate import loss_unobserved
 from .scorer import fit_reference, diagnose as fl_diagnose, NO_EVIDENCE
 
 CAUSES = ["healthy", "dns", "delay", "server", "loss"]
@@ -104,7 +105,7 @@ def main(folder, z_limit=3.5):
               f"{fmt(r['server_wait_s']):>7} {r['retx_count']:4} {fmt(r['total_s'])}   {c}")
         if r["fl_dns"] == NO_EVIDENCE:
             no_dns.append(name)
-        if truth == "loss" and not (r["retx_count"] or r["syn_retx"]):
+        if loss_unobserved(r):
             # loss was switched on but no packet was dropped: nothing to find
             print(f"{'':10} ^ no loss observed (0 retransmissions), left out of scores")
             no_loss.append(name)

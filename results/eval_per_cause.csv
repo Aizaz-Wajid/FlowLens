@@ -1,0 +1,11 @@
+method,cause,tp,fp,fn,support,precision,recall,f1
+B1,healthy,3,11,0,3,0.214,1.000,0.353
+B1,dns,6,0,3,9,1.000,0.667,0.800
+B1,delay,6,0,3,9,1.000,0.667,0.800
+B1,server,6,0,3,9,1.000,0.667,0.800
+B1,loss,1,0,2,3,1.000,0.333,0.500
+FlowLens,healthy,3,0,0,3,1.000,1.000,1.000
+FlowLens,dns,9,0,0,9,1.000,1.000,1.000
+FlowLens,delay,9,0,0,9,1.000,1.000,1.000
+FlowLens,server,9,0,0,9,1.000,1.000,1.000
+FlowLens,loss,3,0,0,3,1.000,1.000,1.000
