@@ -11,10 +11,10 @@ EE-353 Computer Networks, NUST SEECS. Muhammad Aizaz Wajid, Amna Mirza.
     sudo ./lab/lab_setup.sh                                  # create client + server
     sudo ./lab/run_one.sh test run001 dns high small         # one labelled capture
     sudo ./lab/run_batch.sh pilot 5 small                    # many captures
-    python -m flowlens.run data/pilot                        # measure + B1 + scores
+    python -m flowlens.run data/pilot                        # measure + B1 + FlowLens + scores
 
 ## Folders
-- flowlens/ : pcap reader, measurements, baseline B1, FlowLens
+- flowlens/ : pcap reader, measurements, baseline B1, FlowLens (scorer.py)
 - lab/      : lab setup, slow DNS / web servers, capture scripts
 - report/   : reports
 - results/  : graphs and tables
