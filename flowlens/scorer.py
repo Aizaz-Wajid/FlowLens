@@ -5,8 +5,9 @@
 2. For a new transaction, compute a robust z-score per measurement:
        z = (x - median) / spread,   spread = max(1.4826 * MAD, MIN_SPREAD)
 3. A measurement is flagged when z > z_limit (default 3.5).
-4. Each flagged measurement gets the share of the total time it is
-   responsible for; the biggest share is the main cause.
+   A retransmitted SYN is always loss evidence (healthy setups never resend it).
+4. Each flagged cause gets the share of the total time it is responsible
+   for; the biggest share is the main cause.
 5. If DNS was not seen in the capture, DNS is "not enough evidence",
    never "fast".
 """
@@ -19,9 +20,13 @@ CAUSE_OF = {
     "rtt_s":         "delay",
     "server_wait_s": "server",
     "retx_time_s":   "loss",
+    "retx_count":    "loss",
 }
 
 MIN_SPREAD = 0.005      # 5 ms: smallest spread allowed, so z is always defined
+# smallest spread per column (times in seconds, counts in packets)
+MIN_SPREAD_OF = {col: MIN_SPREAD for col in CAUSE_OF}
+MIN_SPREAD_OF["retx_count"] = 1
 MIN_HEALTHY = 5         # fewer healthy values than this -> use built-in defaults
 NO_EVIDENCE = "not enough evidence"
 
@@ -32,6 +37,7 @@ DEFAULT_REFERENCE = {
     "rtt_s":         (0.001, 0.0),
     "server_wait_s": (0.003, 0.0),
     "retx_time_s":   (0.0,   0.0),
+    "retx_count":    (0.0,   0.0),
 }
 
 
@@ -73,12 +79,19 @@ def robust_z(x, median, mad, min_spread=MIN_SPREAD):
     return (x - median) / spread
 
 
-def time_cost(col, row):
-    """How much of the total time this measurement is responsible for.
-    RTT counts twice: a visit waits one round trip for the handshake and
-    one for the request.  The others are already a time span."""
-    x = _num(row.get(col))
-    return 2 * x if col == "rtt_s" else x
+def time_cost(cause, row):
+    """How much of the total time this cause is responsible for.
+    delay: RTT counts twice (one round trip for the handshake, one for the
+           request).
+    loss:  time spent resending data, plus the extra setup time when the
+           SYN had to be resent (setup_s minus one RTT)."""
+    val = lambda col: _num(row.get(col)) or 0.0
+    if cause == "delay":
+        return 2 * val("rtt_s")
+    if cause == "loss":
+        extra_setup = max(0.0, val("setup_s") - val("rtt_s")) if val("syn_retx") else 0.0
+        return val("retx_time_s") + extra_setup
+    return val({"dns": "dns_s", "server": "server_wait_s"}[cause])
 
 
 def diagnose(row, ref, z_limit=3.5):
@@ -89,26 +102,28 @@ def diagnose(row, ref, z_limit=3.5):
         share    {cause: share of total time} for flagged causes
         dns      'ok', 'flagged' or 'not enough evidence'
     """
-    z, flagged = {}, []
+    z, flagged = {}, set()
     for col, cause in CAUSE_OF.items():
         x = _num(row.get(col))
         if x is None or (col == "dns_s" and not _dns_seen(row)):
             z[col] = None
             continue
-        z[col] = robust_z(x, *ref[col])
+        z[col] = robust_z(x, *ref[col], min_spread=MIN_SPREAD_OF[col])
         if z[col] > z_limit:
-            flagged.append(col)
+            flagged.add(cause)
+    if (_num(row.get("syn_retx")) or 0) > 0:
+        flagged.add("loss")                      # a resent SYN is loss evidence
 
     if not _dns_seen(row):
         dns_status = NO_EVIDENCE
     else:
-        dns_status = "flagged" if "dns_s" in flagged else "ok"
+        dns_status = "flagged" if "dns" in flagged else "ok"
 
     if not flagged:
         return {"cause": "healthy", "flagged": [], "z": z, "share": {}, "dns": dns_status}
 
-    costs = {col: time_cost(col, row) for col in flagged}
+    costs = {cause: time_cost(cause, row) for cause in flagged}
     total = _num(row.get("total_s")) or sum(costs.values())
-    share = {CAUSE_OF[col]: (c / total if total else 0.0) for col, c in costs.items()}
+    share = {cause: (c / total if total else 0.0) for cause, c in costs.items()}
     order = sorted(share, key=share.get, reverse=True)
     return {"cause": order[0], "flagged": order, "z": z, "share": share, "dns": dns_status}
