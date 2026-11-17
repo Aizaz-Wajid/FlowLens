@@ -81,7 +81,7 @@ def main(folder, z_limit=3.5):
     ref = fit_reference([m for _, _, t, _, _, m in captures if t == "healthy" and m])
 
     # pass 2: diagnose and print
-    all_rows, b1_pairs, fl_pairs, no_dns = [], [], [], []
+    all_rows, b1_pairs, fl_pairs, no_dns, no_loss = [], [], [], [], []
     print(f"{'capture':10} {'truth':14} {'B1':8} {'FlowLens':8} {'dns':>6} {'rtt':>6} "
           f"{'setup':>6} {'ttfb':>6} {'srvwait':>7} {'retx':>4} {'total':>6}   "
           f"curl dns/conn/ttfb (ms)")
@@ -104,9 +104,16 @@ def main(folder, z_limit=3.5):
               f"{fmt(r['server_wait_s']):>7} {r['retx_count']:4} {fmt(r['total_s'])}   {c}")
         if r["fl_dns"] == NO_EVIDENCE:
             no_dns.append(name)
-        if truth != "?":
+        if truth == "loss" and not (r["retx_count"] or r["syn_retx"]):
+            # loss was switched on but no packet was dropped: nothing to find
+            print(f"{'':10} ^ no loss observed (0 retransmissions), left out of scores")
+            no_loss.append(name)
+        elif truth != "?":
             b1_pairs.append((truth, r["b1"]))
             fl_pairs.append((truth, r["fl"]))
+    if no_loss:
+        print(f"\nNo loss observed in {len(no_loss)} loss capture(s), not scored: "
+              + ", ".join(no_loss))
     if no_dns:
         print(f"\nFlowLens DNS: {NO_EVIDENCE} in " + ", ".join(no_dns))
 
