@@ -1,0 +1,3 @@
+method,captures,top1_correct,top1_accuracy,top1_ci_low,top1_ci_high,healthy,false_alarms,false_alarm_rate,fa_ci_low,fa_ci_high
+B1,79,64,0.810,0.710,0.881,20,0,0.000,0.000,0.161
+FlowLens,79,77,0.975,0.912,0.993,20,0,0.000,0.000,0.161
