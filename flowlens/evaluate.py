@@ -7,6 +7,11 @@ One row per capture is used: the transaction with the most bytes (the web
 visit).  Captures with no truth ("?") and loss captures where no loss was
 observed (0 retransmissions, 0 SYN resends) are left out, same as run.py.
 
+FlowLens answers are taken from the CSV's fl column by default.  With
+--reference, FlowLens is run again on every scored capture, learning what
+"healthy" looks like only from the healthy captures in the reference CSV
+(never from the captures being scored).
+
 Truth may name two problems joined by "+" (e.g. "dns+loss").  A diagnosis is
 correct when its main cause is one of the true problems (top-1 accuracy).
 
@@ -20,6 +25,8 @@ import csv
 import math
 import os
 from collections import defaultdict
+
+from .scorer import fit_reference, load_reference, same_file, diagnose as fl_diagnose
 
 CAUSES = ["healthy", "dns", "delay", "server", "loss"]
 METHODS = {"B1": "b1", "FlowLens": "fl"}       # name -> CSV column
@@ -114,15 +121,28 @@ def main(argv=None):
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("csv", help="measurements.csv from flowlens.run")
     ap.add_argument("--out", default="results", help="output folder")
+    ap.add_argument("--reference", metavar="CSV",
+                    help="measurements CSV whose healthy captures FlowLens learns from; "
+                         "FlowLens is re-run instead of using the fl column")
     a = ap.parse_args(argv)
-    if not os.path.isfile(a.csv):
-        ap.error(f"file not found: {a.csv}")
+    for path in [a.csv] + ([a.reference] if a.reference else []):
+        if not os.path.isfile(path):
+            ap.error(f"file not found: {path}")
+    if a.reference and same_file(a.reference, a.csv):
+        ap.error("--reference must be a different set from the CSV being scored")
     os.makedirs(a.out, exist_ok=True)
 
     rows, skipped = main_rows(a.csv)
     if not rows:
         print("no labelled captures to score")
         return
+    if a.reference:
+        ref_rows = load_reference(a.reference)
+        ref = fit_reference(ref_rows)
+        for r in rows:
+            r["fl"] = fl_diagnose(r, ref)["cause"]
+        print(f"FlowLens re-run with reference: {len(ref_rows)} healthy captures "
+              f"from {a.reference}")
     healthy = [r for r in rows if r["truth"] == "healthy"]
     print(f"{len(rows)} captures scored ({len(healthy)} healthy), "
           f"{len(skipped)} left out: {', '.join(skipped) or '-'}\n")

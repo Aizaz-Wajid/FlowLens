@@ -2,8 +2,15 @@
 
 Usage (from ~/flowlens):
     python -m flowlens.run data/test
+    python -m flowlens.run data/test --reference data/practice/measurements.csv
 Writes data/test/measurements.csv and prints a table plus scores.
+
+FlowLens needs to know what "healthy" looks like.  By default it learns this
+from the healthy captures in the folder itself.  With --reference it learns
+only from the healthy captures in that CSV, and the folder's own captures are
+used only for testing.
 """
+import argparse
 import csv
 import glob
 import json
@@ -13,7 +20,8 @@ import sys
 from .measure import measure_pcap, COLUMNS
 from .baseline import b1_diagnose
 from .evaluate import loss_unobserved
-from .scorer import fit_reference, diagnose as fl_diagnose, NO_EVIDENCE
+from .scorer import (fit_reference, load_reference, same_file,
+                     diagnose as fl_diagnose, NO_EVIDENCE)
 
 CAUSES = ["healthy", "dns", "delay", "server", "loss"]
 
@@ -55,11 +63,15 @@ def print_scores(name, pairs):
                                  for p in CAUSES))
 
 
-def main(folder, z_limit=3.5):
+def main(folder, z_limit=3.5, reference=None):
     pcaps = sorted(glob.glob(os.path.join(folder, "*.pcap")))
     if not pcaps:
         print("no .pcap files in", folder)
         return
+    out = os.path.join(folder, "measurements.csv")
+    if reference and same_file(reference, out):
+        sys.exit(f"--reference {reference} is this folder's own measurements.csv; "
+                 "use healthy captures from a different set")
 
     # pass 1: measure every capture
     captures = []          # (name, label, truth, curl, rows, main_row)
@@ -78,8 +90,13 @@ def main(folder, z_limit=3.5):
         main_row = max(rows, key=lambda r: r["bytes"] or 0) if rows else None
         captures.append((name, label, truth, curl, rows, main_row))
 
-    # FlowLens reference = main transactions of healthy captures
-    ref = fit_reference([m for _, _, t, _, _, m in captures if t == "healthy" and m])
+    # FlowLens reference: what "healthy" looks like
+    if reference:
+        ref_rows = load_reference(reference)          # never the captures under test
+        print(f"FlowLens reference: {len(ref_rows)} healthy captures from {reference}\n")
+    else:
+        ref_rows = [m for _, _, t, _, _, m in captures if t == "healthy" and m]
+    ref = fit_reference(ref_rows)
 
     # pass 2: diagnose and print
     all_rows, b1_pairs, fl_pairs, no_dns, no_loss = [], [], [], [], []
@@ -118,7 +135,6 @@ def main(folder, z_limit=3.5):
     if no_dns:
         print(f"\nFlowLens DNS: {NO_EVIDENCE} in " + ", ".join(no_dns))
 
-    out = os.path.join(folder, "measurements.csv")
     with open(out, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=COLUMNS + ["truth", "b1", "b1_all",
                                                     "fl", "fl_all", "fl_dns"])
@@ -132,5 +148,22 @@ def main(folder, z_limit=3.5):
         print_scores("FlowLens", fl_pairs)
 
 
+def cli(argv=None):
+    ap = argparse.ArgumentParser(prog="python -m flowlens.run",
+        description="Measure every pcap in a folder, diagnose with B1 and FlowLens, "
+                    "and score both against the answer files.")
+    ap.add_argument("folder", nargs="?", default="data/test",
+                    help="folder with .pcap and .json files (default: data/test)")
+    ap.add_argument("--reference", metavar="CSV",
+                    help="measurements CSV whose healthy captures FlowLens learns from "
+                         "(default: the healthy captures in FOLDER)")
+    a = ap.parse_args(argv)
+    if not os.path.isdir(a.folder):
+        ap.error(f"folder not found: {a.folder}")
+    if a.reference and not os.path.isfile(a.reference):
+        ap.error(f"file not found: {a.reference}")
+    main(a.folder, reference=a.reference)
+
+
 if __name__ == "__main__":
-    main(sys.argv[1] if len(sys.argv) > 1 else "data/test")
+    cli()

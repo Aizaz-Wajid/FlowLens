@@ -11,6 +11,8 @@
 5. If DNS was not seen in the capture, DNS is "not enough evidence",
    never "fast".
 """
+import csv
+import os
 import statistics
 import sys
 
@@ -72,6 +74,32 @@ def fit_reference(healthy_rows, min_count=MIN_HEALTHY):
         mad = statistics.median(abs(v - med) for v in vals)
         ref[col] = (med, mad)
     return ref
+
+
+def load_reference(path):
+    """Healthy rows for fit_reference(), read from a measurements CSV.
+
+    One row per capture: the transaction with the most bytes (the web visit).
+    If the CSV has a truth column, only captures with truth "healthy" are
+    used; without one (e.g. output of `python -m flowlens --csv`), every
+    capture in the file is taken to be healthy."""
+    best = {}
+    with open(path, newline="") as f:
+        reader = csv.DictReader(f)
+        has_truth = "truth" in (reader.fieldnames or [])
+        for r in reader:
+            if has_truth and r["truth"] != "healthy":
+                continue
+            b = _num(r.get("bytes")) or 0.0
+            cid = r["capture_id"]
+            if cid not in best or b > best[cid][0]:
+                best[cid] = (b, r)
+    return [r for _, r in best.values()]
+
+
+def same_file(a, b):
+    """True if paths a and b are the same existing file."""
+    return os.path.exists(a) and os.path.exists(b) and os.path.samefile(a, b)
 
 
 def robust_z(x, median, mad, min_spread=MIN_SPREAD):
