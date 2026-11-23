@@ -3,10 +3,17 @@
 Usage:
     python -m flowlens.plots data/test/measurements.csv [--out results]
 
+Captures are chosen the same way as flowlens.evaluate: one row per capture
+(the flow with the most bytes); no-truth captures and loss captures with no
+observed loss are left out.
+
 Writes to the output folder (default: results/):
     delay_breakdown.png  average delay parts per truth problem
     b1_confusion.png     B1 confusion matrix (rows = truth, columns = B1)
     b1_scores.csv        precision, recall, F1 per cause
+    fl_confusion.png     FlowLens confusion matrix   (if the CSV has an fl column)
+    fl_scores.csv        FlowLens precision, recall, F1 per cause
+    f1_compare.png       per-cause F1, B1 next to FlowLens
 """
 
 import argparse
@@ -18,6 +25,8 @@ matplotlib.use("Agg")  # write files only, no window
 import matplotlib.pyplot as plt
 import matplotlib.ticker
 import pandas as pd
+
+from flowlens.evaluate import loss_unobserved
 
 PROBLEMS = ["healthy", "dns", "delay", "server", "loss"]
 
@@ -31,6 +40,10 @@ PARTS = {
 # Fixed categorical colors (blue, orange, aqua, yellow), one per delay part.
 PART_COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100"]
 
+# One fixed color per method, used in every comparison chart.
+METHOD_COLORS = {"B1": "#2a78d6", "FlowLens": "#eb6834"}
+METHOD_COLS = {"B1": "b1", "FlowLens": "fl"}
+
 TEXT = "#2b2b29"
 MUTED = "#6b6a63"
 GRID = "#e4e3de"
@@ -39,7 +52,11 @@ GRID = "#e4e3de"
 def main_transactions(df):
     """Keep one row per capture: the flow with the most bytes."""
     idx = df.groupby("capture_id")["bytes"].idxmax()
-    return df.loc[idx].reset_index(drop=True)
+    main = df.loc[idx].reset_index(drop=True)
+    truth = main["truth"].fillna("?").astype(str)
+    skip = (truth == "?") | main.apply(lambda r: loss_unobserved(r.to_dict()), axis=1)
+    skipped = sorted(main.loc[skip, "capture_id"].astype(str))
+    return main[~skip].reset_index(drop=True), skipped
 
 
 def ordered_labels(*columns):
@@ -84,13 +101,13 @@ def plot_delay_breakdown(main, out_path):
     plt.close(fig)
 
 
-def confusion_matrix(main):
-    labels = ordered_labels(main["truth"], main["b1"])
-    cm = pd.crosstab(main["truth"].astype(str), main["b1"].astype(str))
+def confusion_matrix(main, col="b1"):
+    labels = ordered_labels(main["truth"], main[col])
+    cm = pd.crosstab(main["truth"].astype(str), main[col].astype(str))
     return cm.reindex(index=labels, columns=labels, fill_value=0)
 
 
-def plot_confusion(cm, out_path):
+def plot_confusion(cm, out_path, method="B1"):
     fig, ax = plt.subplots(figsize=(6.5, 5.5))
     vmax = max(int(cm.values.max()), 1)
     img = ax.imshow(cm.values, cmap="Blues", vmin=0, vmax=vmax)
@@ -106,9 +123,10 @@ def plot_confusion(cm, out_path):
     ax.set_xticklabels(cm.columns)
     ax.set_yticks(range(cm.shape[0]))
     ax.set_yticklabels(cm.index)
-    ax.set_xlabel("B1 says", color=TEXT)
+    ax.set_xlabel(f"{method} says", color=TEXT)
     ax.set_ylabel("Truth", color=TEXT)
-    ax.set_title("B1 confusion matrix (captures)", color=TEXT, loc="left")
+    ax.set_title(f"{method} confusion matrix ({int(cm.values.sum())} captures)",
+                 color=TEXT, loc="left")
     ax.tick_params(colors=MUTED, labelcolor=TEXT, length=0)
     for spine in ax.spines.values():
         spine.set_visible(False)
@@ -127,7 +145,7 @@ def scores(cm):
         if cause not in PROBLEMS:
             continue
         tp = cm.at[cause, cause]
-        predicted = cm[cause].sum()       # column: B1 said this cause
+        predicted = cm[cause].sum()       # column: method said this cause
         actual = cm.loc[cause].sum()      # row: truth is this cause
         precision = tp / predicted if predicted else 0.0
         recall = tp / actual if actual else 0.0
@@ -136,6 +154,37 @@ def scores(cm):
         rows.append({"cause": cause, "precision": precision, "recall": recall,
                      "f1": f1, "support": int(actual)})
     return pd.DataFrame(rows)
+
+
+def plot_f1_compare(score_tables, out_path):
+    """Grouped bars: per-cause F1 for each method."""
+    fig, ax = plt.subplots(figsize=(9, 4.8))
+    n = len(score_tables)
+    width = 0.8 / n
+    x = range(len(PROBLEMS))
+    for i, (method, sc) in enumerate(score_tables.items()):
+        f1 = sc.set_index("cause")["f1"].reindex(PROBLEMS).fillna(0)
+        xs = [xi - 0.4 + width * (i + 0.5) for xi in x]
+        bars = ax.bar(xs, f1, width=width * 0.9, color=METHOD_COLORS[method],
+                      label=method, zorder=2)
+        for b, v in zip(bars, f1):
+            ax.text(b.get_x() + b.get_width() / 2, v + 0.015, f"{v:.2f}",
+                    ha="center", va="bottom", fontsize=8, color=MUTED)
+
+    ax.set_xticks(list(x))
+    ax.set_xticklabels(PROBLEMS)
+    ax.set_ylim(0, 1.25)
+    ax.set_yticks([0, 0.2, 0.4, 0.6, 0.8, 1.0])  # F1 never goes above 1
+    ax.set_xlabel("Cause", color=TEXT)
+    ax.set_ylabel("F1 score", color=TEXT)
+    ax.set_title("Per-cause F1: " + " vs ".join(score_tables), color=TEXT, loc="left")
+    ax.yaxis.grid(True, color=GRID, zorder=0)
+    style_axes(ax)
+    ax.legend(frameon=False, ncol=n, loc="upper left", labelcolor=TEXT,
+              bbox_to_anchor=(0, 1.0))
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
 
 
 def main(argv=None):
@@ -149,19 +198,32 @@ def main(argv=None):
     out.mkdir(parents=True, exist_ok=True)
 
     df = pd.read_csv(args.csv)
-    main_df = main_transactions(df)
+    main_df, skipped = main_transactions(df)
 
     plot_delay_breakdown(main_df, out / "delay_breakdown.png")
-    cm = confusion_matrix(main_df)
-    plot_confusion(cm, out / "b1_confusion.png")
-    sc = scores(cm)
-    sc.to_csv(out / "b1_scores.csv", index=False, float_format="%.3f")
+    saved = ["delay_breakdown.png"]
+    print(f"{len(main_df)} captures (main transaction each), "
+          f"{len(skipped)} left out: {', '.join(skipped) or '-'}\n")
 
-    print(f"{len(main_df)} captures (main transaction each)\n")
-    print("Confusion matrix (rows = truth, columns = B1):")
-    print(cm.to_string(), "\n")
-    print(sc.to_string(index=False, float_format="%.3f"), "\n")
-    print(f"Saved to {out}/: delay_breakdown.png, b1_confusion.png, b1_scores.csv")
+    score_tables = {}
+    for method, col in METHOD_COLS.items():
+        if col not in main_df.columns:
+            continue
+        cm = confusion_matrix(main_df, col)
+        plot_confusion(cm, out / f"{col}_confusion.png", method)
+        sc = scores(cm)
+        sc.to_csv(out / f"{col}_scores.csv", index=False, float_format="%.3f")
+        score_tables[method] = sc
+        saved += [f"{col}_confusion.png", f"{col}_scores.csv"]
+        print(f"Confusion matrix (rows = truth, columns = {method}):")
+        print(cm.to_string(), "\n")
+        print(sc.to_string(index=False, float_format="%.3f"), "\n")
+
+    if len(score_tables) > 1:
+        plot_f1_compare(score_tables, out / "f1_compare.png")
+        saved.append("f1_compare.png")
+
+    print(f"Saved to {out}/: {', '.join(saved)}")
 
 
 if __name__ == "__main__":
