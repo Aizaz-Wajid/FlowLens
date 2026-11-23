@@ -176,3 +176,40 @@ def measure_pcap(path, capture_id=None):
         if r is not None:
             rows.append(r)
     return rows
+
+
+def client_gaps(path):
+    """Time the client itself spent between steps (not network, not server).
+
+    Returns {flow_id: {"dns_to_syn_s": ..., "ack_to_request_s": ...}} with the
+    same flow ids as measure_pcap():
+        dns_to_syn_s      DNS answer arrived -> SYN sent   (None if DNS not seen)
+        ack_to_request_s  handshake ACK sent -> last request packet sent
+    Together with dns_s, setup_s, ttfb_s and transfer_s these add up to total_s.
+    """
+    pkts = read_pcap(path)
+    lookups = _dns_lookups(pkts)
+    out = {}
+    flows = sorted(_tcp_flows(pkts).values(), key=lambda fp: fp[0].t)
+    for i, fp in enumerate(flows, 1):
+        syns = [p for p in fp if p.flags & SYN and not p.flags & ACK]
+        if not syns:
+            continue
+        syn = syns[0]
+        cli = (syn.src, syn.sport)
+        is_c2s = lambda p: (p.src, p.sport) == cli
+        gaps = {"dns_to_syn_s": None, "ack_to_request_s": None}
+        before = [l for l in lookups if l[2] <= syn.t and l[3]]
+        if before:
+            gaps["dns_to_syn_s"] = syn.t - before[-1][2]
+        synack = next((p for p in fp if not is_c2s(p) and p.flags & SYN and p.flags & ACK), None)
+        if synack is not None:
+            hs_ack = next((p for p in fp if is_c2s(p) and p.t >= synack.t and p.flags & ACK
+                           and not p.flags & SYN), None)
+            s_data = [p for p in fp if not is_c2s(p) and p.plen > 0]
+            if hs_ack is not None and s_data:
+                req = [p for p in fp if is_c2s(p) and p.plen > 0 and p.t <= s_data[0].t]
+                if req:
+                    gaps["ack_to_request_s"] = req[-1].t - hs_ack.t
+        out[i] = gaps
+    return out
