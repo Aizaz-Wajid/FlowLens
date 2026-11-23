@@ -14,6 +14,19 @@ EE-353 Computer Networks, NUST SEECS. Muhammad Aizaz Wajid, Amna Mirza.
     python -m flowlens.run data/pilot                        # measure + B1 + FlowLens + scores
     python -m flowlens.evaluate data/pilot/measurements.csv # B1 vs FlowLens: F1, false alarms, McNemar
 
+## Dashboard
+    source ~/flenv/bin/activate
+    streamlit run dashboard.py
+
+Then open http://localhost:8501 in your Windows browser (WSL2 forwards localhost to Windows).
+If that page does not load, run `hostname -I` in WSL and open `http://<first address>:8501` instead.
+
+- Pick a capture from `data/` in the sidebar, or upload a `.pcap` file.
+- For the main transaction, the page shows the FlowLens main cause, the ranked causes with their share of the time, and the B1 answer next to it.
+- A stacked bar shows where the time went, and a table lists every transaction.
+- When no DNS lookup was captured, the page says **DNS: not enough evidence** instead of treating DNS as fast.
+- FlowLens learns "healthy" from the pilot set by default. You can choose another reference in the sidebar.
+
 ## Learning "healthy" from a separate set (--reference)
 FlowLens decides that something is slow by comparing it with healthy captures.
 By default, it learns what "healthy" looks like from the healthy captures in the set it is testing.
@@ -35,6 +48,7 @@ Every capture in the tested set, including its healthy ones, is used only for te
 
 ## Folders
 - flowlens/ : pcap reader, measurements, baseline B1, FlowLens (scorer.py)
+- dashboard.py : Streamlit dashboard for one capture
 - lab/      : lab setup, slow DNS / web servers, capture scripts
 - report/   : reports
 - results/  : graphs and tables
