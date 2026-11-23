@@ -24,6 +24,10 @@ def main():
     ap.add_argument("--csv", action="store_true", help="print CSV instead of a table")
     a = ap.parse_args()
 
+    for path in a.pcaps:
+        if not os.path.isfile(path):
+            ap.error(f"file not found: {path}")
+
     rows = []
     for path in a.pcaps:
         r = measure_pcap(path, os.path.splitext(os.path.basename(path))[0])

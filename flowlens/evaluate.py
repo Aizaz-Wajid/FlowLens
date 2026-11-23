@@ -110,11 +110,13 @@ def write_csv(path, rows, fields):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description=__doc__,
+    ap = argparse.ArgumentParser(prog="python -m flowlens.evaluate", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("csv", help="measurements.csv from flowlens.run")
     ap.add_argument("--out", default="results", help="output folder")
     a = ap.parse_args(argv)
+    if not os.path.isfile(a.csv):
+        ap.error(f"file not found: {a.csv}")
     os.makedirs(a.out, exist_ok=True)
 
     rows, skipped = main_rows(a.csv)
